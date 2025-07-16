@@ -1,196 +1,97 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import plotly.io as pio
+from datetime import datetime
 
+# Streamlit app title
+st.title("MIP 3.3 Contemporaneous As-Is Analysis (Longest Path with Total Float)")
 
-st.set_page_config(
-    page_title= "Construction project Dashboard",
-    layout="wide"
-)
-
-
-uploaded_file = st.file_uploader("📂 Upload Your Primavera P6 Excel File", type=["xlsx"])
+# File uploader for Excel file
+uploaded_file = st.file_uploader("Upload your project schedule Excel file", type=["xlsx"])
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file, sheet_name="Project Data")
-    col = st.columns((2.5, 8), gap='medium')
-    
-    # Convert date columns
-    df["Baseline Start"] = pd.to_datetime(df["Baseline Start"])
-    df["Baseline Finish"] = pd.to_datetime(df["Baseline Finish"])
-    df["Actual Start"] = pd.to_datetime(df["Actual Start"])
-    df["Actual Finish"] = pd.to_datetime(df["Actual Finish"])
-    
-    st.sidebar.title("📊 Filters")
-    selected_wbs = st.sidebar.multiselect("Filter by WBS", df["WBS"].unique(), default=df["WBS"].unique())
-    df = df[df["WBS"].isin(selected_wbs)]
-    selected_area = st.sidebar.multiselect("Filter by Area", df["Area"].unique(), default=df["Area"].unique())
-    df = df[df["Area"].isin(selected_area)]
-    selected_resource_name = st.sidebar.multiselect("Filter by Resource Name", df["Resource Name"].unique(), default=df["Resource Name"].unique())
-    df = df[df["Resource Name"].isin(selected_resource_name)]
-    
-    with col[0]:
+    # Read Excel file
+    df = pd.read_excel(uploaded_file)
 
-        st.subheader("📌 Earned Value Management")
-        df["EV"] = df["Budgeted Cost"] * df["Actual %"] / 100
-        df["PV"] = df["Budgeted Cost"] * df["Planned %"] / 100
-        df["AC"] = df["Actual Cost"]
-        EV = df["EV"].sum()
-        PV = df["PV"].sum()
-        AC = df["AC"].sum()
-        latest_date = df["Actual Finish"].max()
-        df_latest = df[df["Actual Finish"] == latest_date]
-        EV = df_latest["EV"].sum()
-        AC = df_latest["AC"].sum()
-        PV = df_latest["PV"].sum()
-        CPI = EV / AC if AC != 0 else 0
-        SPI = EV / PV if PV != 0 else 0
-        CV = EV - AC
-        SV = EV - PV
-        AT = 100
-        ES = SPI * AT if SPI else None
-        Schedule_Variance_Time = ES - AT if ES else None
-    
-        st.metric("Planned Value (PV)", f"${PV:,.2f}")
-        st.metric("Earned Value (EV)", f"${EV:,.2f}")
-        st.metric("Actual Cost (AC)", f"${AC:,.2f}")
-        st.metric("Cost Variance (CV)", f"${CV:,.2f}")
-        st.metric("Schedule Variance (SV)", f"${SV:,.2f}")
-        # Create columns for two charts
-        col1, col2 = st.columns(2)
-        
-        # Donut for CPI
-        with col1:
-            cpi_color = "green" if CPI >= 1 else "red"
-            cpi_fig = go.Figure(data=[go.Pie(
-                labels=["CPI", "Remaining"],
-                values=[CPI, max(2 - CPI, 0.01)],  # Ensure donut has a visible ring
-                hole=0.6,
-                marker=dict(colors=[cpi_color, "lightgray"]),
-                textinfo='label+percent',
-                hoverinfo='label+value'
-            )])
-            cpi_fig.update_layout(
-                title_text=f"CPI = {CPI:.2f}",
-                showlegend=False
-            )
-            st.plotly_chart(cpi_fig, use_container_width=True)
-        
-        # Donut for SPI
-        with col2:
-            spi_color = "blue" if SPI >= 1 else "orange"
-            spi_fig = go.Figure(data=[go.Pie(
-                labels=["SPI", "Remaining"],
-                values=[SPI, max(2 - SPI, 0.01)],
-                hole=0.6,
-                marker=dict(colors=[spi_color, "lightgray"]),
-                textinfo='label+percent',
-                hoverinfo='label+value'
-            )])
-            spi_fig.update_layout(
-                title_text=f"SPI = {SPI:.2f}",
-                showlegend=False
-            )
-            st.plotly_chart(spi_fig, use_container_width=True)
-            
-        st.metric("Earned Schedule (ES)", f"{ES:.2f}" if ES else "N/A")
-        st.metric("Schedule Variance (Time)", f"{Schedule_Variance_Time:.2f}" if Schedule_Variance_Time else "N/A")
+    # Ensure date columns are in datetime format
+    date_columns = ['Planned_Start', 'Planned_Finish', 'Actual_Start', 'Actual_Finish']
+    for col in date_columns:
+        df[col] = pd.to_datetime(df[col], errors='coerce')
 
-    with col[1]:
+    # Ensure Total_Float is numeric
+    df['Total_Float'] = pd.to_numeric(df['Total_Float'], errors='coerce')
 
-        st.markdown('#### Gantt Chart, S-Curve, and Resource Histogram')
-        df_sorted = df.sort_values(by="Activity ID")
-        
-        # Create a new column for color coding
-        df["Critical Color"] = df["Critical "].fillna("").apply(lambda x: "Critical" if str(x).strip().lower() == "yes" else "Non-Critical")
-        
-        # Set custom order for y-axis (activity names)
-        activity_order = df_sorted["Activity Name"].tolist()
-    
-        # Plot using the new color column
-        gantt_fig = px.timeline(
-            df,
-            x_start= "Baseline Start",
-            x_end="Baseline Finish",
-            y="Activity Name",
-            color="Critical Color",  # Use color based on criticality
-            color_discrete_map={
-                "Non-Critical": "green"
-            },
-            category_orders={"Activity Name": activity_order}, 
-            hover_data=["Activity ID", "Activity Code", "Planned %", "Actual %", "Remarks"]
+    # Separate baseline and updates
+    baseline_df = df[df['Update_ID'] == 'Baseline']
+    update_dfs = df[df['Update_ID'] != 'Baseline']
+
+    # Function to calculate delays for longest path activities relative to baseline
+    def calculate_delays(update_df, baseline_df, update_id):
+        # Filter for the specific update and longest path activities
+        longest_path_df = update_df[(update_df['Update_ID'] == update_id) & 
+                                   (update_df['Longest_Path'].isin([True, 'Yes']))]
+
+        # Merge with baseline to get baseline planned finish dates and float
+        merged_df = longest_path_df.merge(
+            baseline_df[['Activity_ID', 'Planned_Finish', 'Longest_Path', 'Total_Float']],
+            on='Activity_ID',
+            suffixes=('_update', '_baseline')
         )
-    
-        gantt_fig.update_layout(
-            yaxis_autorange="max",
-            title="Gantt Chart with Critical Path Highlighted",
-            height=500
-        )
-        st.plotly_chart(gantt_fig, use_container_width=True)
 
-        fig_col1, fig_col2 = st.columns(2)  # Corrected variable names
-    
-        with fig_col1:
-            # Sort and compute cumulative values
-            df_sorted = df.sort_values("Actual Finish")
-            df_sorted["Cumulative Planned Cost"] = df_sorted["Budgeted Cost"].cumsum()
-            df_sorted["Cumulative Actual Cost"] = df_sorted["Actual Cost"].cumsum()
-    
-            # Create a figure with secondary y-axis
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
-    
-            # Add S-Curve lines (secondary y-axis)
-            fig.add_trace(
-                go.Scatter(x=df_sorted["Actual Finish"], y=df_sorted["Cumulative Planned Cost"],
-                       mode='lines+markers', name='Planned Cumulative Cost'),
-                secondary_y=True
-            )
-            fig.add_trace(
-                go.Scatter(x=df_sorted["Actual Finish"], y=df_sorted["Cumulative Actual Cost"],
-                       mode='lines+markers', name='Actual Cumulative Cost'),
-                secondary_y=True
-            )
-    
-            # Add bar chart for individual activity costs (primary y-axis)
-            fig.add_trace(
-                go.Bar(x=df_sorted["Actual Finish"], y=df_sorted["Budgeted Cost"], name="Budgeted Cost", opacity=0.5),
-                secondary_y=False
-            )
-            fig.add_trace(
-            go.Bar(x=df_sorted["Actual Finish"], y=df_sorted["Actual Cost"], name="Actual Cost", opacity=0.5),
-            secondary_y=False
-            )
-    
-            # Update axis titles
-            fig.update_layout(
-                title="S-Curve and Cost Histogram Combined",
-                xaxis_title="Actual Finish Date",
-                barmode="group"
-            )
-            fig.update_yaxes(title_text="Cost", secondary_y=False)
-            fig.update_yaxes(title_text="Cumulative Cost", secondary_y=True)
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    
-            # Show in Streamlit
-            st.plotly_chart(fig, use_container_width=True)
-            
-        with fig_col2:
-            st.markdown("### Man-hour Histogram")
-            hist_fig_manhour = px.bar(df, x="Activity Name", y=["Budgeted Hours", "Actual Hours"], barmode="group")
-            st.plotly_chart(hist_fig_manhour, use_container_width=True)
+        # Calculate delay (Actual_Finish - Baseline Planned_Finish) in days
+        merged_df['Delay_Days'] = (merged_df['Actual_Finish_update'] - 
+                                  merged_df['Planned_Finish_baseline']).dt.days
 
- 
-    st.subheader("📈 Performance Indices Over Time")
-    df_grouped = df.groupby("Actual Finish").agg({"EV": "sum", "PV": "sum", "AC": "sum"}).sort_index().reset_index()
-    df_grouped["CPI"] = df_grouped["EV"] / df_grouped["AC"]
-    df_grouped["SPI"] = df_grouped["EV"] / df_grouped["PV"]
-    trend_fig = go.Figure()
-    trend_fig.add_trace(go.Scatter(x=df_grouped["Actual Finish"], y=df_grouped["CPI"],
-                                    mode='lines+markers', name="CPI", line=dict(color='green')))
-    trend_fig.add_trace(go.Scatter(x=df_grouped["Actual Finish"], y=df_grouped["SPI"],
-                                    mode='lines+markers', name="SPI", line=dict(color='blue')))
-    trend_fig.update_layout(xaxis_title="Date", yaxis_title="Index Value", yaxis=dict(range=[0, 2]))
-    st.plotly_chart(trend_fig, use_container_width=True)
+        # Filter out rows where delay is calculable (non-NaN)
+        merged_df = merged_df.dropna(subset=['Delay_Days'])
+
+        return merged_df[['Activity_ID', 'Activity_Name', 'Delay_Days', 'Delay_Cause', 
+                         'Planned_Finish_baseline', 'Actual_Finish_update', 
+                         'Total_Float_update', 'Total_Float_baseline']]
+
+    # Get unique update IDs (excluding Baseline)
+    update_ids = update_dfs['Update_ID'].unique()
+
+    # Initialize results
+    all_delays = []
+    summary_data = []
+
+    # Analyze each update
+    for update_id in update_ids:
+        delay_df = calculate_delays(update_dfs, baseline_df, update_id)
+        if not delay_df.empty:
+            all_delays.append(delay_df)
+            # Summarize delays by cause for this update
+            summary = delay_df.groupby('Delay_Cause')['Delay_Days'].sum().reset_index()
+            summary['Update_ID'] = update_id
+            summary_data.append(summary)
+
+    if all_delays:
+        # Combine all delay data
+        all_delays_df = pd.concat(all_delays)
+
+        # Display detailed delay table
+        st.subheader("Detailed Delay Analysis (Longest Path, Relative to Baseline)")
+        st.dataframe(all_delays_df)
+
+        # Combine summary data
+        summary_df = pd.concat(summary_data)
+
+        # Display summary table
+        st.subheader("Summary of Delays by Update and Cause")
+        st.dataframe(summary_df)
+
+        # Visualize delays by update and cause
+        st.subheader("Delay Visualization")
+        fig = px.bar(summary_df, 
+                     x='Update_ID', 
+                     y='Delay_Days', 
+                     color='Delay_Cause', 
+                     title='Total Delays by Update and Cause (Longest Path)',
+                     labels={'Update_ID': 'Schedule Update', 'Delay_Days': 'Delay (Days)'},
+                     barmode='stack')
+        st.plotly_chart(fig)
+    else:
+        st.write("No longest path delays found in the provided data.")
+else:
+    st.write("Please upload an Excel file to analyze.")
