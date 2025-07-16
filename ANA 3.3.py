@@ -32,12 +32,21 @@ if uploaded_file:
                                    (update_df['Longest_Path'].isin([True, 'Yes']))]
 
         # Merge with baseline to get baseline planned finish dates and float
-        merged_df = longest_path_df.merge(
-            baseline_df[['Activity_ID', 'Planned_Finish', 'Longest_Path', 'Total_Float']],
-            on='Activity_ID',
-            suffixes=('_update', '_baseline')
-        )
+        # Select relevant columns explicitly before merge
+        longest_path_df = longest_path_df[['Activity_ID', 'Activity_Name', 'Actual_Finish', 'Total_Float', 'Delay_Cause']]
+        longest_path_df = longest_path_df.rename(columns={
+            'Actual_Finish': 'Actual_Finish_update',
+            'Total_Float': 'Total_Float_update'
+        })
 
+        baseline_part = baseline_df[['Activity_ID', 'Planned_Finish', 'Total_Float']]
+        baseline_part = baseline_part.rename(columns={
+            'Planned_Finish': 'Planned_Finish_baseline',
+        'Total_Float': 'Total_Float_baseline'
+        })
+
+# Merge safely
+merged_df = pd.merge(longest_path_df, baseline_part, on='Activity_ID', how='inner')
         # Calculate delay (Actual_Finish - Baseline Planned_Finish) in days
         merged_df['Delay_Days'] = (merged_df['Actual_Finish_update'] - 
                                   merged_df['Planned_Finish_baseline']).dt.days
