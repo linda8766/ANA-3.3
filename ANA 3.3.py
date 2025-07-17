@@ -18,7 +18,7 @@ if uploaded_file:
 
     required_columns = [
         'Activity_Id', 'Activity_Name', 'Update_Id', 'Planned_Start', 'Planned_Finish',
-        'Actual_Start', 'Actual_Finish', 'Longest_Path', 'Total_Float', 'Delay_Cause'
+        'Actual_Start', 'Actual_Finish', 'Longest_Path', 'Total_Float'
     ]
 
     # Check for missing columns
@@ -42,7 +42,7 @@ if uploaded_file:
         longest_path_df = update_df[
             (update_df['Update_Id'] == update_id) &
             (update_df['Longest_Path'].isin([True, 'Yes', 'TRUE', 'yes']))
-        ][['Activity_Id', 'Activity_Name', 'Actual_Finish', 'Total_Float', 'Delay_Cause']]
+        ][['Activity_Id', 'Activity_Name', 'Actual_Finish', 'Total_Float']]
 
         longest_path_df = longest_path_df.rename(columns={
             'Actual_Finish': 'Actual_Finish_Update',
@@ -66,36 +66,23 @@ if uploaded_file:
 
         merged_df['Update_Id'] = update_id
 
-        return merged_df[['Update_Id', 'Activity_Id', 'Activity_Name', 'Delay_Days', 'Delay_Cause',
+        return merged_df[['Update_Id', 'Activity_Id', 'Activity_Name', 'Delay_Days',
                           'Planned_Finish_Baseline', 'Actual_Finish_Update',
                           'Total_Float_Update', 'Total_Float_Baseline']]
 
     all_updates = update_dfs['Update_Id'].unique()
     all_delays = []
-    summary_data = []
 
     for update_id in all_updates:
         delay_df = calculate_delays(update_dfs, baseline_df, update_id)
         if not delay_df.empty:
             all_delays.append(delay_df)
-            summary = delay_df.groupby('Delay_Cause')['Delay_Days'].sum().reset_index()
-            summary['Update_Id'] = update_id
-            summary_data.append(summary)
 
     if all_delays:
         all_delays_df = pd.concat(all_delays, ignore_index=True)
 
         st.subheader("Detailed Delay Analysis Table")
         st.dataframe(all_delays_df)
-
-        summary_df = pd.concat(summary_data, ignore_index=True)
-        st.subheader("Summary of Delay Causes by Update")
-        st.dataframe(summary_df)
-
-        st.subheader("Delay Causes by Update (Stacked Bar Chart)")
-        fig1 = px.bar(summary_df, x='Update_Id', y='Delay_Days', color='Delay_Cause',
-                     title="Delay Contribution per Update", barmode='stack')
-        st.plotly_chart(fig1, use_container_width=True)
 
         st.subheader("Finish Date Drift Tracking (Gantt Style)")
         drift_data = all_delays_df.copy()
