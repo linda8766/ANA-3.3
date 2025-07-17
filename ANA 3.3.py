@@ -13,8 +13,11 @@ uploaded_file = st.file_uploader("Upload your project schedule Excel file", type
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
+    # Normalize column headers
+    df.columns = df.columns.str.strip().str.replace(' ', '_').str.title()
+
     required_columns = [
-        'Activity_ID', 'Activity_Name', 'Update_ID', 'Planned_Start', 'Planned_Finish',
+        'Activity_Id', 'Activity_Name', 'Update_Id', 'Planned_Start', 'Planned_Finish',
         'Actual_Start', 'Actual_Finish', 'Longest_Path', 'Total_Float', 'Delay_Cause'
     ]
 
@@ -32,42 +35,42 @@ if uploaded_file:
     df['Total_Float'] = pd.to_numeric(df['Total_Float'], errors='coerce')
 
     # Split into baseline and updates
-    baseline_df = df[df['Update_ID'] == 'Baseline']
-    update_dfs = df[df['Update_ID'] != 'Baseline']
+    baseline_df = df[df['Update_Id'] == 'Baseline']
+    update_dfs = df[df['Update_Id'] != 'Baseline']
 
     def calculate_delays(update_df, baseline_df, update_id):
         longest_path_df = update_df[
-            (update_df['Update_ID'] == update_id) &
+            (update_df['Update_Id'] == update_id) &
             (update_df['Longest_Path'].isin([True, 'Yes', 'TRUE', 'yes']))
-        ][['Activity_ID', 'Activity_Name', 'Actual_Finish', 'Total_Float', 'Delay_Cause']]
+        ][['Activity_Id', 'Activity_Name', 'Actual_Finish', 'Total_Float', 'Delay_Cause']]
 
         longest_path_df = longest_path_df.rename(columns={
-            'Actual_Finish': 'Actual_Finish_update',
-            'Total_Float': 'Total_Float_update'
+            'Actual_Finish': 'Actual_Finish_Update',
+            'Total_Float': 'Total_Float_Update'
         })
 
-        baseline_part = baseline_df[['Activity_ID', 'Planned_Finish', 'Total_Float']].rename(columns={
-            'Planned_Finish': 'Planned_Finish_baseline',
-            'Total_Float': 'Total_Float_baseline'
+        baseline_part = baseline_df[['Activity_Id', 'Planned_Finish', 'Total_Float']].rename(columns={
+            'Planned_Finish': 'Planned_Finish_Baseline',
+            'Total_Float': 'Total_Float_Baseline'
         })
 
-        merged_df = pd.merge(longest_path_df, baseline_part, on='Activity_ID', how='inner')
+        merged_df = pd.merge(longest_path_df, baseline_part, on='Activity_Id', how='inner')
 
         if merged_df.empty:
             st.warning(f"No longest path matches found for update: {update_id}")
             return pd.DataFrame()
 
         merged_df['Delay_Days'] = (
-            merged_df['Actual_Finish_update'] - merged_df['Planned_Finish_baseline']
+            merged_df['Actual_Finish_Update'] - merged_df['Planned_Finish_Baseline']
         ).dt.days
 
-        merged_df['Update_ID'] = update_id
+        merged_df['Update_Id'] = update_id
 
-        return merged_df[['Update_ID', 'Activity_ID', 'Activity_Name', 'Delay_Days', 'Delay_Cause',
-                          'Planned_Finish_baseline', 'Actual_Finish_update',
-                          'Total_Float_update', 'Total_Float_baseline']]
+        return merged_df[['Update_Id', 'Activity_Id', 'Activity_Name', 'Delay_Days', 'Delay_Cause',
+                          'Planned_Finish_Baseline', 'Actual_Finish_Update',
+                          'Total_Float_Update', 'Total_Float_Baseline']]
 
-    all_updates = update_dfs['Update_ID'].unique()
+    all_updates = update_dfs['Update_Id'].unique()
     all_delays = []
     summary_data = []
 
@@ -76,7 +79,7 @@ if uploaded_file:
         if not delay_df.empty:
             all_delays.append(delay_df)
             summary = delay_df.groupby('Delay_Cause')['Delay_Days'].sum().reset_index()
-            summary['Update_ID'] = update_id
+            summary['Update_Id'] = update_id
             summary_data.append(summary)
 
     if all_delays:
@@ -90,18 +93,18 @@ if uploaded_file:
         st.dataframe(summary_df)
 
         st.subheader("Delay Causes by Update (Stacked Bar Chart)")
-        fig1 = px.bar(summary_df, x='Update_ID', y='Delay_Days', color='Delay_Cause',
+        fig1 = px.bar(summary_df, x='Update_Id', y='Delay_Days', color='Delay_Cause',
                      title="Delay Contribution per Update", barmode='stack')
         st.plotly_chart(fig1, use_container_width=True)
 
         st.subheader("Finish Date Drift Tracking (Gantt Style)")
         drift_data = all_delays_df.copy()
-        drift_data['Baseline'] = drift_data['Planned_Finish_baseline']
-        drift_data['Actual'] = drift_data['Actual_Finish_update']
+        drift_data['Baseline'] = drift_data['Planned_Finish_Baseline']
+        drift_data['Actual'] = drift_data['Actual_Finish_Update']
 
         gantt_df = pd.melt(
             drift_data,
-            id_vars=['Update_ID', 'Activity_ID', 'Activity_Name'],
+            id_vars=['Update_Id', 'Activity_Id', 'Activity_Name'],
             value_vars=['Baseline', 'Actual'],
             var_name='Type',
             value_name='Finish_Date'
@@ -110,7 +113,7 @@ if uploaded_file:
         fig2 = px.timeline(
             gantt_df,
             x_start='Finish_Date', x_end='Finish_Date',
-            y='Activity_Name', color='Type', facet_col='Update_ID',
+            y='Activity_Name', color='Type', facet_col='Update_Id',
             title='Finish Date Shifts of Longest Path Activities'
         )
         st.plotly_chart(fig2, use_container_width=True)
